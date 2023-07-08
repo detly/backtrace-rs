@@ -1,0 +1,45 @@
+name: Build with patched std
+description: >
+  Build a binary with a version of std that's had a specific revision of
+  backtrace patched in.
+inputs:
+  backtrace-commit:
+    description: The git commit of backtrace to patch in to std
+    required: true
+  main-rs:
+    description: The (single) source code file to compile
+    required: true
+  rustc-dir:
+    description: The root directory of the rustc repo
+    required: true
+outputs:
+  test-binary-size:
+    description: The size in bytes of the built test binary
+    value: ${{ steps.measure.outputs.test-binary-size }}
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.rustc-dir }}
+      run: rm -rf build/x86_64-unknown-linux-gnu/stage0-std
+    - shell: bash
+      working-directory: ${{ inputs.rustc-dir }}/library/backtrace
+      run: git checkout ${{ inputs.backtrace-commit }}
+    - shell: bash
+      working-directory: ${{ inputs.rustc-dir }}
+      run: git add library/backtrace
+    - shell: bash
+      working-directory: ${{ inputs.rustc-dir }}
+      run: python3 x.py build library --stage 0
+    - id: measure
+      shell: bash
+      working-directory: ${{ inputs.rustc-dir }}
+      run: |
+        set -x
+        cp -r ./build/x86_64-unknown-linux-gnu/stage0/bin ./build/x86_64-unknown-linux-gnu/stage0-sysroot/bin
+        cp -r ./build/x86_64-unknown-linux-gnu/stage0/lib/*.so ./build/x86_64-unknown-linux-gnu/stage0-sysroot/lib
+        TEMP_BUILD_OUTPUT=$(mktemp test-binary-XXXXXXXX)
+        ./build/x86_64-unknown-linux-gnu/stage0-sysroot/bin/rustc -O "${{ inputs.main-rs }}" -o "$TEMP_BUILD_OUTPUT"
+        BINARY_SIZE=$(stat -c '%s' "$TEMP_BUILD_OUTPUT")
+        rm "$TEMP_BUILD_OUTPUT"
+        echo "test-binary-size=$BINARY_SIZE" >> "$GITHUB_OUTPUT"
