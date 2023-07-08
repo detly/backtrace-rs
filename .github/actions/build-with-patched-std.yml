@@ -1,0 +1,28 @@
+name: Build with patched std
+description: >
+  Build a binary with a version of std that's had a specific revision of
+  backtrace patched in.
+inputs:
+  backtrace-commit:
+    description: The git commit of backtrace to patch in to std
+    required: true
+  main-rs:
+    description: The (single) source code file to compile
+    required: true
+outputs:
+  test-binary-size:
+    description: The size in bytes of the built test binary
+runs:
+  using: "composite"
+  steps:
+    - name: Build binary with patched version of backtrace
+      run: |
+        rm -rf build/x86_64-unknown-linux-gnu/stage0-std
+        (cd library/backtrace && git checkout ${{ inputs.backtrace-commit }})
+        git add library/backtrace
+        python3 x.py build library --stage 0
+        cp -r ./build/x86_64-unknown-linux-gnu/stage0/bin ./build/x86_64-unknown-linux-gnu/stage0-sysroot/bin
+        cp -r ./build/x86_64-unknown-linux-gnu/stage0/lib/*.so ./build/x86_64-unknown-linux-gnu/stage0-sysroot/lib
+        TEMP_BUILD_OUTPUT=$(mktemp test-binary)
+        ./build/x86_64-unknown-linux-gnu/stage0-sysroot/bin/rustc -O ${{ inputs.main-rs }} -o "$TEMP_BUILD_OUTPUT"
+        echo "$(stat -c '%s' binary-reference)" >> "$GITHUB_OUTPUT"
