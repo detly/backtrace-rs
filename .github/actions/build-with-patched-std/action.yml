@@ -20,26 +20,22 @@ runs:
   using: "composite"
   steps:
     - shell: bash
-      working-directory: ${{ inputs.rustc-dir }}
-      run: rm -rf build/x86_64-unknown-linux-gnu/stage0-std
-    - shell: bash
-      working-directory: ${{ inputs.rustc-dir }}/library/backtrace
-      run: git checkout ${{ inputs.backtrace-commit }}
-    - shell: bash
-      working-directory: ${{ inputs.rustc-dir }}
-      run: git add library/backtrace
-    - shell: bash
-      working-directory: ${{ inputs.rustc-dir }}
-      run: python3 x.py build library --stage 0
-    - id: measure
-      shell: bash
+      id: measure
       working-directory: ${{ inputs.rustc-dir }}
       run: |
-        set -x
+        rm -rf build/x86_64-unknown-linux-gnu/stage0-std
+
+        (cd library/backtrace && git checkout ${{ inputs.backtrace-commit }})
+        git add library/backtrace
+
+        python3 x.py build library --stage 0
+
         cp -r ./build/x86_64-unknown-linux-gnu/stage0/bin ./build/x86_64-unknown-linux-gnu/stage0-sysroot/bin
         cp -r ./build/x86_64-unknown-linux-gnu/stage0/lib/*.so ./build/x86_64-unknown-linux-gnu/stage0-sysroot/lib
+
         TEMP_BUILD_OUTPUT=$(mktemp test-binary-XXXXXXXX)
         ./build/x86_64-unknown-linux-gnu/stage0-sysroot/bin/rustc -O "${{ inputs.main-rs }}" -o "$TEMP_BUILD_OUTPUT"
         BINARY_SIZE=$(stat -c '%s' "$TEMP_BUILD_OUTPUT")
         rm "$TEMP_BUILD_OUTPUT"
+
         echo "test-binary-size=$BINARY_SIZE" >> "$GITHUB_OUTPUT"
