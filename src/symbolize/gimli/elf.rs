@@ -45,31 +45,7 @@ impl Mapping {
 
     /// Load debuginfo from an external debug file.
     fn new_debug(original_path: &Path, path: PathBuf, crc: Option<u32>) -> Option<Mapping> {
-        let map = super::mmap(&path)?;
-        Mapping::mk(map, |map, stash| {
-            let object = Object::parse(&map)?;
-
-            if let Some(_crc) = crc {
-                // TODO: check crc
-            }
-
-            // Try to locate a supplementary object file.
-            let mut sup = None;
-            if let Some((path_sup, build_id_sup)) = object.gnu_debugaltlink_path(&path) {
-                if let Some(map_sup) = super::mmap(&path_sup) {
-                    let map_sup = stash.cache_mmap(map_sup);
-                    if let Some(sup_) = Object::parse(map_sup) {
-                        if sup_.build_id() == Some(build_id_sup) {
-                            sup = Some(sup_);
-                        }
-                    }
-                }
-            }
-
-            let dwp = Mapping::load_dwarf_package(original_path, stash);
-
-            Context::new(stash, object, sup, dwp)
-        })
+        None
     }
 
     /// Try to locate a DWARF package file.
