@@ -16,58 +16,71 @@ jobs:
     permissions:
       pull-requests: write
     env:
-      RUSTC_DIR: ./rustc
-      BACKTRACE_DIR: ./backtrace
+      # This cannot be used as a context variable in the 'uses' key later. If it
+      # changes, update those steps too.
+      BACKTRACE_DIR: backtrace
+      RUSTC_DIR: rustc
       TEST_MAIN_RS: foo.rs
+      BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+      HEAD_COMMIT: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Print info
         run: |
-          echo "Current SHA: ${{ github.event.pull_request.head.sha }}"
-          echo "Base SHA: ${{ github.event.pull_request.base.sha }}"
+          echo "Current SHA: $HEAD_COMMIT"
+          echo "Base SHA: $BASE_COMMIT"
       # Note: the backtrace source that's cloned here is NOT the version to be
       # patched in to std. It's cloned here to access the Github action for
       # building the test binary and measuring its size.
       - name: Clone backtrace to access Github action
         uses: actions/checkout@v3
         with:
-          fetch-depth: 1
           path: ${{ env.BACKTRACE_DIR }}
       - name: Clone Rustc
         uses: actions/checkout@v3
         with:
           repository: rust-lang/rust
-          fetch-depth: 1
           path: ${{ env.RUSTC_DIR }}
       - name: Set up std repository and backtrace submodule for size test
         working-directory: ${{ env.RUSTC_DIR }}
         run: |
+          # Bootstrap config
+          cat <<EOF > config.toml
+          [llvm]
+          download-ci-llvm = true
+          [rust]
+          incremental = false
+          EOF
+
+          # Test program source
+          cat <<EOF > $TEST_MAIN_RS
+          fn main() {
+            panic!();
+          }
+          EOF
+
           git submodule update --init library/backtrace
-          printf "[llvm]\ndownload-ci-llvm = true\n\n[rust]\nincremental = false\n" > config.toml
+
           cd library/backtrace
-          git remote add head-pr https://github.com/${{ github.event.pull_request.head.repo.full_name }}
+          git remote add head-pr https://github.com/${{ github.event.pull_request.head.repo.full_name }} && \
           git fetch --all
-          cd ../..
-      - name: Create hello world program that uses backtrace
-        working-directory: ${{ env.RUSTC_DIR }}
-        run: printf "fn main() { panic!(); }" > $TEST_MAIN_RS
       - name: Compile binary with base version of backtrace
         uses: ./backtrace/.github/actions/build-with-patched-std
         with:
-          backtrace-commit: ${{ github.event.pull_request.base.sha }}
+          backtrace-commit: $BASE_COMMIT
           main-rs: ${{ env.TEST_MAIN_RS }}
           rustc-dir: ${{ env.RUSTC_DIR }}
         id: size-reference
       - name: Compile binary with PR version of backtrace
         uses: ./backtrace/.github/actions/build-with-patched-std
         with:
-          backtrace-commit: ${{ github.event.pull_request.head.sha }}
+          backtrace-commit: $HEAD_COMMIT
           main-rs: ${{ env.TEST_MAIN_RS }}
           rustc-dir: ${{ env.RUSTC_DIR }}
         id: size-updated
       - name: Post a PR comment if the size has changed
         uses: actions/github-script@v6
         env:
-          SIZE_REFERENCE: ${{ steps.size-updated.outputs.test-binary-size }}
+          SIZE_REFERENCE: ${{ steps.size-reference.outputs.test-binary-size }}
           SIZE_UPDATED: ${{ steps.size-updated.outputs.test-binary-size }}
         with:
           script: |
