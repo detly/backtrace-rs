@@ -24,7 +24,12 @@ runs:
   using: composite
   steps:
     - shell: bash
-      id: measure
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        apt-get update
+        apt-get install -y -q python3-tomlkit
+    - shell: bash
       env:
         RUSTC_FLAGS: -Copt-level=3 -Cstrip=symbols
         # This symlink is made by Build::new() in the bootstrap crate, using a
@@ -37,7 +42,72 @@ runs:
 
         (cd library/backtrace && git checkout ${{ inputs.backtrace-commit }})
         git add library/backtrace
+    - name: Patch std dependencies from backtrace
+      shell: python
+      env:
+        PATCH_DEPS: addr2line rustc-demangle miniz_oxide object
+      run: |
+        import operator, os, tomlkit
+        from functools import reduce
+        from tomlkit.toml_file import TOMLFile
 
+        # The deps to patch can't always be inferred by comparing manifests.
+        # Require the workflow to specify them via this env var.
+        DEPS_ENV_NAME = "PATCH_DEPS"
+
+        deps_to_patch = os.environ.get(DEPS_ENV_NAME, "").split()
+
+        if not len(deps_to_patch):
+            raise SystemExit(f"Environment variable {DEPS_ENV_NAME} is not set")
+
+        # These functions allow finding a "path" (list of keys) to the version
+        # key in the TOML doc, and getting/setting via that path.
+
+        def version_path(package_node):
+            match package_node:
+                case tomlkit.items.String(version):
+                    # packagename = "a.b.c"
+                    return []
+                case tomlkit.items.AbstractTable(table):
+                    # packagename = { version = "a.b.c" } (or full table)
+                    return ["version"]
+                case _:
+                    return None
+
+        def get_by_keys(package_node, path):
+            return reduce(operator.getitem, path, package_node)
+
+        def set_by_keys(package_node, path, version):
+            get_by_keys(package_node, path[:-1])[path[-1]] = version
+
+        manifest_bt = TOMLFile("library/backtrace/Cargo.toml").read()
+
+        deps_bt = {
+            dep: get_by_keys(val, pth)
+            for dep, val in manifest_bt["dependencies"].items()
+            if dep in deps_to_patch and (pth := version_path(val)) is not None
+        }
+
+        manifest_std = TOMLFile("library/std/Cargo.toml").read()
+        deps_std = manifest_std["dependencies"]
+
+        for (dep, ver) in deps_bt.items():
+            if (dep_node := deps_std.get(dep)):
+                # Can't set the root by key, that would have to assign in the
+                # caller. So prefix with dependency key and start one level up.
+                path_from_deps_section = [dep] + version_path(dep_node)
+                ver_old = get_by_keys(deps_std, path_from_deps_section)
+                set_by_keys(deps_std, path_from_deps_section, ver)
+                print(f"Patched {dep} = {ver} from {ver_old} in std")
+
+        TOMLFile("library/std/Cargo.toml").write(manifest_std)
+
+    - shell: bash
+      id: measure
+      env:
+        RUSTC_FLAGS: -Copt-level=s -Cstrip=symbols
+        RUSTC_BUILD_DIR: build/x86_64-unknown-linux-gnu
+      run: |
         python3 x.py build library --stage 0
 
         TEMP_BUILD_OUTPUT=$(mktemp test-binary-XXXXXXXX)
