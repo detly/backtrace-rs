@@ -4,10 +4,7 @@
 # If the size of the hello world program has changed, it posts a comment to the PR.
 name: Check binary size
 
-on:
-  pull_request_target:
-    branches:
-      - master
+on: pull_request_target
 
 # Both the "measure" and "report" jobs need to know this.
 env:
